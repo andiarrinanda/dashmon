@@ -167,6 +167,8 @@ const NotificationCenter = ({ userRole }: NotificationCenterProps) => {
         return <Settings className="h-4 w-4 text-orange-600" />;
       case 'user_activity':
         return <User className="h-4 w-4 text-indigo-600" />;
+      case 'success':
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
       default:
         return <Bell className="h-4 w-4 text-muted-foreground" />;
     }
@@ -182,6 +184,7 @@ const NotificationCenter = ({ userRole }: NotificationCenterProps) => {
       case 'report_completed':
       case 'report_submitted':
       case 'report_pending_approval':
+      case 'success':
         return 'medium';
       default:
         return 'low';

@@ -88,6 +88,7 @@ const MainApp = ({ userRole = 'admin', userName = 'Admin Central', currentSBU, o
             <Routes>
               <Route path="/" element={<Navigate to="dashboard" replace />} />
               <Route path="/dashboard" element={<DashboardView userRole={userRole} />} />
+              <Route path="/dashboard" element={<DashboardView userRole={userRole} currentSBU={currentSBU} />} />
               <Route path="/upload" element={<UploadInterface />} />
               <Route path="/reports" element={<ReportsManagement userRole={userRole} currentSBU={currentSBU} />} />
               <Route path="/analytics" element={<AnalyticsView userRole={userRole} currentSBU={currentSBU} />} />
@@ -122,7 +123,7 @@ const MainApp = ({ userRole = 'admin', userName = 'Admin Central', currentSBU, o
 };
 
 // Dashboard View Component
-const DashboardView = ({ userRole }: { userRole: 'admin' | 'sbu' }) => {
+const DashboardView = ({ userRole, currentSBU }: { userRole: 'admin' | 'sbu'; currentSBU?: string }) => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -162,10 +163,10 @@ const DashboardView = ({ userRole }: { userRole: 'admin' | 'sbu' }) => {
         </p>
       </div>
       
-      <DashboardStats userRole={userRole} />
+      <DashboardStats userRole={userRole} currentSBU={currentSBU} />
       
       <div className="grid gap-6 lg:grid-cols-2">
-        <RecentActivity />
+        <RecentActivity userRole={userRole} currentSBU={currentSBU} />
         
         <Card>
           <CardHeader>

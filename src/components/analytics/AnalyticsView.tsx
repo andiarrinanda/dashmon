@@ -7,6 +7,8 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend } from 'recharts';
 import { TrendingUp, Trophy, Target, Activity, Filter, Download } from "lucide-react";
 import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 interface AnalyticsViewProps {
   userRole: 'admin' | 'sbu';
@@ -16,15 +18,28 @@ interface AnalyticsViewProps {
 const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsViewProps) => {
   const [selectedPeriod, setSelectedPeriod] = useState('semester-1-2024');
   const [selectedIndicator, setSelectedIndicator] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
+  const [performanceComparisonData, setPerformanceComparisonData] = useState<any[]>([]);
+  const [trendData, setTrendData] = useState<any[]>([]);
+  const [activityCompositionData, setActivityCompositionData] = useState<any[]>([]);
+  const { toast } = useToast();
+  
   const [liveData, setLiveData] = useState({
-    totalReports: 1295,
-    approvalRate: 94.2,
-    averageScore: 85.7,
-    activeSBU: 18
+    totalReports: 0,
+    approvalRate: 0,
+    averageScore: 0,
+    activeSBU: 0
   });
+
+  useEffect(() => {
+    fetchAnalyticsData();
+  }, [selectedPeriod, selectedIndicator, userRole, currentSBU]);
 
   // Simulate real-time updates
   useEffect(() => {
+    if (liveData.totalReports === 0) return; // Don't update if no initial data
+    
     const interval = setInterval(() => {
       setLiveData(prev => ({
         totalReports: prev.totalReports + Math.floor(Math.random() * 3),
@@ -37,39 +52,215 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
     return () => clearInterval(interval);
   }, []);
 
-  // Mock data - akan diganti dengan data real dari Supabase
-  const leaderboardData = [
-    { rank: 1, sbu: 'SBU Jawa Barat', score: 92.5, change: '+2.3' },
-    { rank: 2, sbu: 'SBU Jawa Timur', score: 89.2, change: '+1.8' },
-    { rank: 3, sbu: 'SBU DKI Jakarta', score: 87.1, change: '-0.5' },
-    { rank: 4, sbu: 'SBU Sumatra Utara', score: 84.6, change: '+3.2' },
-    { rank: 5, sbu: 'SBU Kalimantan Timur', score: 82.3, change: '+0.9' },
-    { rank: 6, sbu: 'SBU Sulawesi Selatan', score: 79.8, change: '-1.2' },
-  ];
+  const fetchAnalyticsData = async () => {
+    try {
+      setLoading(true);
+      
+      // Fetch all reports with user profiles
+      const { data: reports, error: reportsError } = await supabase
+        .from('reports')
+        .select(`
+          id,
+          status,
+          calculated_score,
+          indicator_type,
+          created_at,
+          approved_at,
+          profiles!reports_user_id_fkey(full_name, sbu_name)
+        `)
+        .order('created_at', { ascending: false });
 
-  const performanceComparisonData = [
-    { indicator: 'Siaran Pers', 'SBU Jawa Barat': 95, 'SBU Jawa Timur': 88, 'SBU DKI Jakarta': 92, rata_rata: 85 },
-    { indicator: 'Media Sosial', 'SBU Jawa Barat': 87, 'SBU Jawa Timur': 91, 'SBU DKI Jakarta': 89, rata_rata: 82 },
-    { indicator: 'Skoring Media', 'SBU Jawa Barat': 94, 'SBU Jawa Timur': 86, 'SBU DKI Jakarta': 83, rata_rata: 79 },
-    { indicator: 'Kampanye Komun.', 'SBU Jawa Barat': 78, 'SBU Jawa Timur': 85, 'SBU DKI Jakarta': 87, rata_rata: 75 },
-  ];
+      if (reportsError) throw reportsError;
 
-  const trendData = [
-    { month: 'Jan', total_laporan: 145, approved: 132, rejected: 13 },
-    { month: 'Feb', total_laporan: 168, approved: 155, rejected: 13 },
-    { month: 'Mar', total_laporan: 192, approved: 178, rejected: 14 },
-    { month: 'Apr', total_laporan: 234, approved: 218, rejected: 16 },
-    { month: 'May', total_laporan: 267, approved: 245, rejected: 22 },
-    { month: 'Jun', total_laporan: 289, approved: 271, rejected: 18 },
-  ];
+      // Fetch active SBU count
+      const { data: sbuUsers, error: sbuError } = await supabase
+        .from('profiles')
+        .select('sbu_name')
+        .eq('role', 'sbu')
+        .not('sbu_name', 'is', null);
 
-  const activityCompositionData = [
-    { name: 'Siaran Pers', value: 35, color: 'hsl(var(--primary))' },
-    { name: 'Konten Media Sosial', value: 28, color: 'hsl(var(--secondary))' },
-    { name: 'Publikasi Media Massa', value: 20, color: 'hsl(var(--accent))' },
-    { name: 'Kampanye Komunikasi', value: 12, color: 'hsl(var(--desmon-primary))' },
-    { name: 'Tindaklanjut OFI', value: 5, color: 'hsl(var(--desmon-secondary))' },
-  ];
+      if (sbuError) throw sbuError;
+
+      // Calculate live data
+      const totalReports = reports?.length || 0;
+      const approvedReports = reports?.filter(r => r.status === 'approved' || r.status === 'completed').length || 0;
+      const approvalRate = totalReports > 0 ? (approvedReports / totalReports) * 100 : 0;
+      
+      const completedWithScores = reports?.filter(r => r.calculated_score !== null) || [];
+      const averageScore = completedWithScores.length > 0 
+        ? completedWithScores.reduce((sum, r) => sum + (r.calculated_score || 0), 0) / completedWithScores.length
+        : 0;
+      
+      const uniqueSBUs = new Set(sbuUsers?.map(u => u.sbu_name).filter(Boolean));
+      const activeSBU = uniqueSBUs.size;
+
+      setLiveData({
+        totalReports,
+        approvalRate,
+        averageScore,
+        activeSBU
+      });
+
+      // Generate leaderboard data
+      await generateLeaderboardData(reports || []);
+      
+      // Generate performance comparison data
+      await generatePerformanceData(reports || []);
+      
+      // Generate trend data
+      await generateTrendData(reports || []);
+      
+      // Generate activity composition data
+      await generateCompositionData(reports || []);
+      
+    } catch (error) {
+      console.error('Error fetching analytics data:', error);
+      toast({
+        title: "Error",
+        description: "Gagal memuat data analytics",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateLeaderboardData = async (reports: any[]) => {
+    // Group reports by SBU and calculate average scores
+    const sbuScores: { [key: string]: { scores: number[], totalReports: number } } = {};
+    
+    reports.forEach(report => {
+      const sbuName = report.profiles?.sbu_name;
+      if (!sbuName || !report.calculated_score) return;
+      
+      if (!sbuScores[sbuName]) {
+        sbuScores[sbuName] = { scores: [], totalReports: 0 };
+      }
+      
+      sbuScores[sbuName].scores.push(report.calculated_score);
+      sbuScores[sbuName].totalReports++;
+    });
+
+    // Calculate average scores and create leaderboard
+    const leaderboard = Object.entries(sbuScores)
+      .map(([sbu, data]) => ({
+        sbu,
+        score: data.scores.reduce((sum, score) => sum + score, 0) / data.scores.length,
+        totalReports: data.totalReports,
+        change: (Math.random() - 0.5) * 5 // Mock change for now
+      }))
+      .sort((a, b) => b.score - a.score)
+      .map((item, index) => ({
+        rank: index + 1,
+        sbu: item.sbu,
+        score: Number(item.score.toFixed(1)),
+        change: item.change > 0 ? `+${item.change.toFixed(1)}` : item.change.toFixed(1)
+      }));
+
+    setLeaderboardData(leaderboard);
+  };
+
+  const generatePerformanceData = async (reports: any[]) => {
+    // Group by indicator type and SBU
+    const indicatorPerformance: { [key: string]: { [key: string]: number[] } } = {};
+    
+    reports.forEach(report => {
+      const sbuName = report.profiles?.sbu_name;
+      const indicator = report.indicator_type;
+      
+      if (!sbuName || !indicator || !report.calculated_score) return;
+      
+      if (!indicatorPerformance[indicator]) {
+        indicatorPerformance[indicator] = {};
+      }
+      
+      if (!indicatorPerformance[indicator][sbuName]) {
+        indicatorPerformance[indicator][sbuName] = [];
+      }
+      
+      indicatorPerformance[indicator][sbuName].push(report.calculated_score);
+    });
+
+    // Calculate averages and create comparison data
+    const comparisonData = Object.entries(indicatorPerformance).map(([indicator, sbuData]) => {
+      const result: any = { indicator };
+      let totalScores: number[] = [];
+      
+      Object.entries(sbuData).forEach(([sbu, scores]) => {
+        const avgScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+        result[sbu] = Math.round(avgScore);
+        totalScores.push(...scores);
+      });
+      
+      // Calculate overall average
+      result.rata_rata = totalScores.length > 0 
+        ? Math.round(totalScores.reduce((sum, score) => sum + score, 0) / totalScores.length)
+        : 0;
+      
+      return result;
+    });
+
+    setPerformanceComparisonData(comparisonData);
+  };
+
+  const generateTrendData = async (reports: any[]) => {
+    // Group reports by month
+    const monthlyData: { [key: string]: { total: number, approved: number, rejected: number } } = {};
+    
+    reports.forEach(report => {
+      const date = new Date(report.created_at);
+      const monthKey = date.toLocaleDateString('id-ID', { month: 'short' });
+      
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = { total: 0, approved: 0, rejected: 0 };
+      }
+      
+      monthlyData[monthKey].total++;
+      
+      if (report.status === 'approved' || report.status === 'completed') {
+        monthlyData[monthKey].approved++;
+      } else if (report.status === 'rejected' || report.status === 'system_rejected') {
+        monthlyData[monthKey].rejected++;
+      }
+    });
+
+    // Convert to array format for chart
+    const trendArray = Object.entries(monthlyData).map(([month, data]) => ({
+      month,
+      total_laporan: data.total,
+      approved: data.approved,
+      rejected: data.rejected
+    }));
+
+    setTrendData(trendArray);
+  };
+
+  const generateCompositionData = async (reports: any[]) => {
+    // Group by indicator type
+    const indicatorCounts: { [key: string]: number } = {};
+    
+    reports.forEach(report => {
+      const indicator = report.indicator_type || 'Unknown';
+      indicatorCounts[indicator] = (indicatorCounts[indicator] || 0) + 1;
+    });
+
+    // Convert to chart format
+    const colors = [
+      'hsl(var(--primary))',
+      'hsl(var(--secondary))',
+      'hsl(var(--accent))',
+      'hsl(var(--desmon-primary))',
+      'hsl(var(--desmon-secondary))'
+    ];
+
+    const compositionArray = Object.entries(indicatorCounts).map(([name, value], index) => ({
+      name,
+      value,
+      color: colors[index % colors.length]
+    }));
+
+    setActivityCompositionData(compositionArray);
+  };
 
   const chartConfig = {
     total_laporan: {
@@ -113,6 +304,7 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
         <div className="flex flex-wrap gap-2">
           <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
             <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-[180px]" disabled={loading}>
               <SelectValue placeholder="Pilih Periode" />
             </SelectTrigger>
             <SelectContent>
@@ -124,6 +316,7 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
           
           <Select value={selectedIndicator} onValueChange={setSelectedIndicator}>
             <SelectTrigger className="w-[160px]">
+            <SelectTrigger className="w-[160px]" disabled={loading}>
               <SelectValue placeholder="Filter Indikator" />
             </SelectTrigger>
             <SelectContent>
@@ -134,7 +327,7 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
             </SelectContent>
           </Select>
           
-          <Button variant="outline">
+          <Button variant="outline" disabled={loading}>
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
@@ -223,6 +416,25 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
+                {loading ? (
+                  <div className="space-y-3">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <div key={index} className="flex items-center justify-between p-4 rounded-lg border animate-pulse">
+                        <div className="flex items-center gap-4">
+                          <div className="w-8 h-8 bg-muted rounded-full"></div>
+                          <div className="space-y-2">
+                            <div className="h-4 bg-muted rounded w-32"></div>
+                            <div className="h-3 bg-muted rounded w-24"></div>
+                          </div>
+                        </div>
+                        <div className="text-right space-y-2">
+                          <div className="h-6 bg-muted rounded w-12"></div>
+                          <div className="h-3 bg-muted rounded w-16"></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : leaderboardData.length > 0 ? (
                 {leaderboardData.map((item) => (
                   <div
                     key={item.rank}
@@ -263,6 +475,12 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
                     </div>
                   </div>
                 ))}
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Trophy className="mx-auto h-12 w-12 mb-4 opacity-50" />
+                    <p>Belum ada data peringkat tersedia</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -279,6 +497,11 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
             </CardHeader>
             <CardContent>
               <ChartContainer config={chartConfig} className="h-[400px]">
+                {loading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={performanceComparisonData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -292,6 +515,7 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
                     <Bar dataKey="rata_rata" fill="hsl(var(--muted-foreground))" />
                   </BarChart>
                 </ResponsiveContainer>
+                )}
               </ChartContainer>
             </CardContent>
           </Card>
@@ -308,6 +532,11 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
             </CardHeader>
             <CardContent>
               <ChartContainer config={chartConfig} className="h-[400px]">
+                {loading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trendData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -320,6 +549,7 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
                     <Line type="monotone" dataKey="rejected" stroke="hsl(var(--destructive))" strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
+                )}
               </ChartContainer>
             </CardContent>
           </Card>
@@ -336,6 +566,11 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
             </CardHeader>
             <CardContent>
               <ChartContainer config={chartConfig} className="h-[400px]">
+                {loading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -355,6 +590,7 @@ const AnalyticsView = ({ userRole, currentSBU = 'SBU Jawa Barat' }: AnalyticsVie
                     <ChartTooltip content={<ChartTooltipContent />} />
                   </PieChart>
                 </ResponsiveContainer>
+                )}
               </ChartContainer>
             </CardContent>
           </Card>

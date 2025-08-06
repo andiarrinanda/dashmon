@@ -1,5 +1,7 @@
 import { Bell, User, Settings, LogOut, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,13 +14,66 @@ import { Badge } from "@/components/ui/badge";
 interface HeaderProps {
   userRole: 'admin' | 'sbu';
   userName: string;
-  notificationCount: number;
+  notificationCount?: number;
   onMenuToggle?: () => void;
   onSignOut?: () => void;
   onNotificationClick?: () => void;
 }
 
-const Header = ({ userRole, userName, notificationCount, onMenuToggle, onSignOut, onNotificationClick }: HeaderProps) => {
+const Header = ({ userRole, userName, notificationCount: propNotificationCount, onMenuToggle, onSignOut, onNotificationClick }: HeaderProps) => {
+  const [notificationCount, setNotificationCount] = useState(propNotificationCount || 0);
+
+  useEffect(() => {
+    fetchNotificationCount();
+    
+    // Set up real-time subscription for notification count
+    const { data: { user } } = supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        const channel = supabase
+          .channel('notification-count-changes')
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'notifications',
+              filter: `user_id=eq.${data.user.id}`
+            },
+            () => {
+              fetchNotificationCount();
+            }
+          )
+          .subscribe();
+
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      }
+    });
+  }, []);
+
+  const fetchNotificationCount = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('is_read', false);
+
+      if (error) {
+        console.error('Error fetching notification count:', error);
+        return;
+      }
+
+      setNotificationCount(data?.length || 0);
+    } catch (error) {
+      console.error('Error fetching notification count:', error);
+    }
+  };
+
   return (
     <header className="h-16 bg-gradient-to-r from-desmon-primary to-desmon-secondary text-white shadow-desmon-card border-b sticky top-0 z-50">
       <div className="h-full px-4 flex items-center justify-between">

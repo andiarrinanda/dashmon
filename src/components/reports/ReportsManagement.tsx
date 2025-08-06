@@ -25,66 +25,17 @@ import {
 import ReportDetailModal from "./ReportDetailModal";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useEffect } from "react";
 
 interface ReportsManagementProps {
   userRole: 'admin' | 'sbu';
   currentSBU?: string;
 }
 
-// Mock data untuk demo
-const mockReports = [
-  {
-    id: "RPT-001",
-    fileName: "Laporan Media Sosial Q4 2024.xlsx",
-    submittedBy: "Ahmad Sutanto",
-    sbu: "SBU Jawa Barat",
-    submittedAt: "2024-01-15 14:30",
-    status: "approved",
-    indicatorType: "Media Sosial",
-    calculatedScore: 85.5,
-    approvedBy: "Admin Central",
-    approvedAt: "2024-01-16 09:15"
-  },
-  {
-    id: "RPT-002", 
-    fileName: "Digital Marketing Report Jan 2024.xlsx",
-    submittedBy: "Siti Rahayu",
-    sbu: "SBU Jawa Tengah",
-    submittedAt: "2024-01-14 16:45",
-    status: "pending",
-    indicatorType: "Digital Marketing",
-    calculatedScore: null,
-    approvedBy: null,
-    approvedAt: null
-  },
-  {
-    id: "RPT-003",
-    fileName: "Website Analytics Dec 2023.xlsx", 
-    submittedBy: "Budi Prasetyo",
-    sbu: "SBU Jawa Barat",
-    submittedAt: "2024-01-13 11:20",
-    status: "rejected",
-    indicatorType: "Website",
-    calculatedScore: null,
-    approvedBy: "Admin Central",
-    approvedAt: "2024-01-14 08:30",
-    rejectionReason: "Data tidak lengkap, mohon upload ulang dengan data yang complete"
-  },
-  {
-    id: "RPT-004",
-    fileName: "Social Media Engagement Report.xlsx",
-    submittedBy: "Lisa Andriani", 
-    sbu: "SBU DKI Jakarta",
-    submittedAt: "2024-01-12 13:15",
-    status: "processing",
-    indicatorType: "Media Sosial",
-    calculatedScore: null,
-    approvedBy: null,
-    approvedAt: null
-  }
-];
-
 const ReportsManagement = ({ userRole, currentSBU = "SBU Jawa Barat" }: ReportsManagementProps) => {
+  const [reports, setReports] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [indicatorFilter, setIndicatorFilter] = useState("all");
@@ -94,11 +45,71 @@ const ReportsManagement = ({ userRole, currentSBU = "SBU Jawa Barat" }: ReportsM
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    fetchReports();
+  }, [userRole, currentSBU]);
+
+  const fetchReports = async () => {
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      let query = supabase
+        .from('reports')
+        .select(`
+          id,
+          file_name,
+          status,
+          indicator_type,
+          calculated_score,
+          created_at,
+          approved_at,
+          rejection_reason,
+          profiles!reports_user_id_fkey(full_name, sbu_name),
+          approver:profiles!reports_approved_by_fkey(full_name)
+        `)
+        .order('created_at', { ascending: false });
+
+      // For SBU users, only show their own reports
+      if (userRole === 'sbu') {
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // Transform data to match component expectations
+      const transformedReports = (data || []).map(report => ({
+        id: report.id,
+        fileName: report.file_name,
+        submittedBy: (report.profiles as any)?.full_name || 'Unknown User',
+        sbu: (report.profiles as any)?.sbu_name || 'Unknown SBU',
+        submittedAt: new Date(report.created_at).toLocaleString('id-ID'),
+        status: report.status,
+        indicatorType: report.indicator_type,
+        calculatedScore: report.calculated_score,
+        approvedBy: (report.approver as any)?.full_name || null,
+        approvedAt: report.approved_at ? new Date(report.approved_at).toLocaleString('id-ID') : null,
+        rejectionReason: report.rejection_reason
+      }));
+
+      setReports(transformedReports);
+    } catch (error) {
+      console.error('Error fetching reports:', error);
+      toast({
+        title: "Error",
+        description: "Gagal memuat data laporan",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Filter reports based on user role
-  const filteredReports = mockReports.filter(report => {
-    // For SBU users, only show their own reports
-    if (userRole === 'sbu' && report.sbu !== currentSBU) return false;
-    
+  const filteredReports = reports.filter(report => {
     // Apply search filter
     if (searchTerm && !report.fileName.toLowerCase().includes(searchTerm.toLowerCase()) && 
         !report.submittedBy.toLowerCase().includes(searchTerm.toLowerCase())) return false;
@@ -341,6 +352,25 @@ const ReportsManagement = ({ userRole, currentSBU = "SBU Jawa Barat" }: ReportsM
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
+            {loading ? (
+              <div className="space-y-4">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <div key={index} className="flex items-center justify-between p-4 border rounded-lg animate-pulse">
+                    <div className="flex items-center space-x-4 flex-1">
+                      <div className="h-4 w-4 bg-muted rounded"></div>
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 bg-muted rounded w-3/4"></div>
+                        <div className="h-3 bg-muted rounded w-1/2"></div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="h-8 w-16 bg-muted rounded"></div>
+                      <div className="h-8 w-20 bg-muted rounded"></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : filteredReports.length > 0 ? (
             {filteredReports.map((report) => (
               <div key={report.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50">
                 <div className="flex items-center space-x-4">
@@ -435,8 +465,7 @@ const ReportsManagement = ({ userRole, currentSBU = "SBU Jawa Barat" }: ReportsM
                 </div>
               </div>
             ))}
-
-            {filteredReports.length === 0 && (
+            ) : (
               <div className="text-center py-8 text-muted-foreground">
                 <FileText className="mx-auto h-12 w-12 mb-4 opacity-50" />
                 <p>Tidak ada laporan yang ditemukan</p>
